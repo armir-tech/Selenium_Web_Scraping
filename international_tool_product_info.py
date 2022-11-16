@@ -11,19 +11,30 @@
 
 #There is also needed to compare the SKU(ItemNumber) in the input file with the one in the reults file, in order to make sure that the exact product is matched. If not, an "ErroMessage" is present to inform the client that the SKU in the product page mismatches the right one and it is not the product expected from search.
 
-
+#Selenium library is going to be used to automate the data extraction process.
 from selenium import webdriver
 from selenium.webdriver.common.by import By 
 from selenium.webdriver.common.keys import Keys
+
+#Pandas is going to be used to structure the raw data extracted into dataframe (pandas table), which on its side will be converted to the desired output file (csv in this case). 
 import pandas as pd
+
+#time-dedicated modules come in handy, as we have date input values intended to be used with regard to the client's specific request and also record the harvest's timestamp.
+#This way, we can do some date format manipulation.
 import time
 from datetime import datetime
 import pytz
+
+
+#This tool is the most important one, which helps making the harvest process quick and efficient, by making sure searching for multiple products simultaneously.
+#The number of workers(products to be harvested at a time) set should match the CPU and memory capacity(the higher, the better support), to ensure a proper performance. 
 from concurrent.futures import ThreadPoolExecutor
 
 
-
+#The csv input file is read by pandas and converted to dataframe.
+#fillna('') method set empty cell's value to a "null" string. This adjustment is useful for this case, as we will need it for a condition below in the "violation_check" function definition.
 df=pd.read_csv('/home/armir/Downloads/Milwaukee_August_Inputs_No_Zip.csv').fillna('')
+
 
 #With input is meant the list of initial values provided by the client, which are the data we refer to, in order to carry out the process and match the client's requests.
 #For example, the value of "ItemNumber" field is always used as search term for each product. Also, 
@@ -31,7 +42,7 @@ df=pd.read_csv('/home/armir/Downloads/Milwaukee_August_Inputs_No_Zip.csv').filln
 input_rows_list=[[row.UPC,row.ItemNumber,row.ItemDesc,row.IMAPPrice,row.Promo1Price,row.Promo1Start,row.Promo1End] for row in df.itertuples()] #elegant pythonic way to get a list of lists, with all input rows.
 print(input_rows_list)
 
-csv_file='/home/armir/Downloads/international_tool_results.csv'
+output_file='/home/armir/Downloads/international_tool_results.csv'
 
 
 #We need to record the timestamp to fill the field "DateofScrape", which is required to belong to the US/Central timezone
@@ -142,7 +153,7 @@ def extract_data(input_row):
     #if search shows a list of result, a check for relevant ones is performed and if so, necessary data are got directly in this page.    
     elif len(driver.find_elements(By.XPATH,'//li[@class="product-item"]'))!=0:
         
-        exact_product_xpath='//li[@class="product-item"][.//span[@class="vendor-number"]//strong[text()="{}"]][1]'.format(item_number)
+        exact_product_xpath='//li[@class="product-item"][.//span[@class="vendor-number"]//strong[text()="{}"]][1]'.format(item_number) #this xpath expression locates the product card of the one with the item-number used to search it 
         relevant_results=driver.find_elements(By.XPATH,exact_product_xpath)
         
         #if there are relevant results (ones of a product with the item number searched with), the needed data are extracted for all of them.
@@ -203,12 +214,13 @@ def extract_data(input_row):
 
 
 #This is the most interesting part, which ensures that the site is opened and harvested multiple times simultaneosly, to make the process faster.
-with ThreadPoolExecutor(max_workers=1) as executor:
+#Set workers number to 10, which is OK for my PC. Raising it, did not change the speed of extraction, as the memory is occupied at max with as many, so the extra others are forced to wait until the previous ones finish scraping.
+with ThreadPoolExecutor(max_workers=10) as executor:
     executor.map(extract_data,input_rows_list)
 
 
 #In the end, we create a csv results file from the final dataframe we obtained.
-results_df.to_csv(csv_file,index=False)
+results_df.to_csv(output_file,index=False)
  
 
 
