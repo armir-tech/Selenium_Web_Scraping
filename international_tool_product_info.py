@@ -23,15 +23,15 @@ from concurrent.futures import ThreadPoolExecutor
 
 
 
-df=pd.read_csv('path_to_input_file') #Dataframe is created from csv inputs file. The path can be as you desire.
+df=pd.read_csv('/home/armir/Downloads/Milwaukee_August_Inputs_No_Zip.csv').fillna('')
 
 #With input is meant the list of initial values provided by the client, which are the data we refer to, in order to carry out the process and match the client's requests.
-#For example, the value of "ItemNumber" field is always used as search term for each product. Also, everyday price and promotion dates and price are used to check for violation, as specified by the client. 
+#For example, the value of "ItemNumber" field is always used as search term for each product. Also, 
 
 input_rows_list=[[row.UPC,row.ItemNumber,row.ItemDesc,row.IMAPPrice,row.Promo1Price,row.Promo1Start,row.Promo1End] for row in df.itertuples()] #elegant pythonic way to get a list of lists, with all input rows.
 print(input_rows_list)
 
-results_file='path_to_results_file' #Used to specify the path of results file, which can be whatever you want in your PC. 
+csv_file='/home/armir/Downloads/international_tool_results.csv'
 
 
 #We need to record the timestamp to fill the field "DateofScrape", which is required to belong to the US/Central timezone
@@ -39,45 +39,42 @@ def timestamp():
     return datetime.now().astimezone(pytz.timezone('US/Central')).strftime('%m/%d/%Y, %H:%M:%S %p')
 
 
-#This function checks if there is any promotion period for the searched product. This period is defined in the inputs file. 
-def promo_check(promo_start,promo_end):  
-    if promo_start!='' and promo_end!='':
-        return True
-    return False
-
-#The below function is needed to check whether we are within the promotion period. This way, if so, we have to compare the price captured with the promo price.
-def is_date_between(promo_start,promo_end):
-    format="%m/%d/%Y"
-    current_date=datetime.strptime(datetime.now().strftime(format),format)
-    start_date=datetime.strptime(promo_start,format)
-    end_date=datetime.strptime(promo_end,format)
-    if current_date>start_date and current_date<end_date:
-        return True
-    return False
-
 #This one is the most important for the client. It serves the need to check if the price captured is lower than promo price (if we are in the promo period) or the everyday price (if there is no promotion period)
 #If so, this is considered a price VIOLATION to them. This is the essence of the project.
 
 def violation_check(retailer_price,imap_price,promo1price,promo1start,promo1end):
-    if promo_check(promo1start,promo1end) and is_date_between(promo1start,promo1end):
-        if retailer_price<promo1price:
-            return "YES"
-        return "NO"
+    
+    if promo1start!='' and promo1end!='': #if there is a promotion period for the product
+        format="%m/%d/%Y"
+        current_date=datetime.strptime(datetime.now().strftime(format),format)
+        start_date=datetime.strptime(promo1start,format)
+        end_date=datetime.strptime(promo1end,format)
+        if current_date>start_date and current_date<end_date: #if we are within the promotion period, e compare the extracted price with the promotion one, else we do with the everyday price.
+            if float(retailer_price)<float(promo1price):  
+                return "YES"
+            return "NO"            
+        else:
+            if float(retailer_price)<float(imap_price):
+                return "YES"
+            return "NO"
+
     else:
-        if retailer_price<imap_price:
+        if float(retailer_price)<float(imap_price):
             return "YES"
         return "NO"
 
 
 #The below row creates an empty dataframe, with the fields specified, as client requested them.
-results_df=pd.DataFrame(columns=['UPC','ItemDesc','SellerName','ProductTitle','ProductURL','ItemNumber','ItemNumber-Website','IMAPPrice','RetailPrice','Promo1Price','Promo1Start','Promo1End','Violation','In-OutofStock','GeoLocation','DateExtractedCST','ErrorMessage'])
+ouptut_columns_list=['UPC','ItemDesc','SellerName','ProductTitle','ProductURL','ItemNumber','ItemNumber-Website','IMAPPrice','RetailPrice','Promo1Price','Promo1Start','Promo1End','Violation','In-OutofStock','GeoLocation','DateExtractedCST','ErrorMessage']
+results_df=pd.DataFrame(columns=ouptut_columns_list)
 print(results_df)
 
 
+
 #This function will be used to update the above dataframe with every row extracting from scraping process.
-def add_results(results_dict):
-    global results_df
-    page_results_df=pd.DataFrame(results_dict)
+def add_results(results_list):
+    global results_df,ouptut_columns_list
+    page_results_df=pd.DataFrame(results_list,columns=ouptut_columns_list)
     results_df=pd.concat([results_df,page_results_df],ignore_index=True)
     
 
@@ -101,32 +98,34 @@ def extract_data(input_row):
     
     #if we are inside a product page and the result matches the intended searched product, we extract the needed data, else we add an error message for the mismatch encountered.
     if len(driver.find_elements(By.CSS_SELECTOR,'div[class="meta"]'))!=0: 
-        
+        print(len(driver.find_elements(By.CSS_SELECTOR,'div[class="meta"]'))!=0)
         product_title=driver.find_element(By.CSS_SELECTOR,'div[class="name"]').text
         product_url=driver.current_url
         seller_name='International Tool'
          
         if(driver.find_element(By.CSS_SELECTOR,'span[class="vendor-number"] strong').text==item_number):
             item_number_website=driver.find_element(By.CSS_SELECTOR,'span[class="vendor-number"] strong').text
+            print(item_number)
             retailer_price=driver.find_element(By.CSS_SELECTOR,'div[class="price text-align-right"] p').text.strip().replace("$","").replace(",","")
-            violation=violation_check(int(retailer_price),int(imap_price),int(promo1price),promo1start,promo1end)            
-            
+            violation=violation_check(retailer_price,imap_price,promo1price,promo1start,promo1end)            
+            print(type(violation))
+
             if len(driver.find_elements(By.CSS_SELECTOR,'button[id="addToCartButton"]'))!=0:
                 stock='In Stock'
             
             else:
                 stock='Out of Stock'
                 
-            print(stock)
-            results_dict={'UPC':[upc],'ItemDesc':[item_desc],'SellerName':[seller_name],'ProductTitle':[product_title],'ProductURL':[product_url],'ItemNumber':[item_number],'ItemNumber-Website':[item_number_website],'IMAPPrice':[imap_price],'RetailPrice':[retailer_price],'Promo1Price':[promo1price],'Promo1Start':[promo1start],'Promo1End':[promo1end],'Violation':[violation],'In-OutofStock':[stock],'GeoLocation':[''],'DateExtractedCST':[timestamp()],'ErrorMessage':['']}
-            add_results(results_dict)
+            print(stock) 
+            results_list=[upc,item_desc,seller_name,product_title,product_url,item_number,item_number_website,imap_price,retailer_price,promo1price,promo1start,promo1end,violation,stock,'',timestamp(),'']
+            add_results([results_list])
 
             print(results_df)
         
         else:
             error_message='The "ItemNumber" input does not match the one in the pdp.'    
-            results_dict={'UPC':[upc],'ItemDesc':[item_desc],'SellerName':[seller_name],'ProductTitle':[product_title],'ProductURL':[product_url],'ItemNumber':[item_number],'ItemNumber-Website':[''],'IMAPPrice':[imap_price],'RetailPrice':[''],'Promo1Price':[promo1price],'Promo1Start':[promo1start],'Promo1End':[promo1end],'Violation':["NO"],'In-OutofStock':[''],'GeoLocation':[''],'DateExtractedCST':[timestamp()],'ErrorMessage':[error_message]}
-            add_results(results_dict)
+            results_list=[upc,item_desc,seller_name,product_title,product_url,item_number,'',imap_price,'',promo1price,promo1start,promo1end,"NO",'','',timestamp(),error_message]
+            add_results([results_list])
             print(results_df)
     
     
@@ -134,14 +133,15 @@ def extract_data(input_row):
     #if no result is found for search only the error message appeared is extracted.
     elif len(driver.find_elements(By.XPATH,'''//div[@class="content__description type--caption"][contains(.,"We're sorry, we couldn't find any results for")]'''))!=0:
             error_message=driver.find_elements(By.XPATH,'''//div[@class="content__description type--caption"][contains(.,"We're sorry, we couldn't find any results for")]''')[0].text
-            results_dict={'UPC':[upc],'ItemDesc':[item_desc],'SellerName':[''],'ProductTitle':[''],'ProductURL':[''],'ItemNumber':[item_number],'ItemNumber-Website':[''],'IMAPPrice':[imap_price],'RetailPrice':[''],'Promo1Price':[promo1price],'Promo1Start':[promo1start],'Promo1End':[promo1end],'Violation':['NO'],'In-OutofStock':[''],'GeoLocation':[''],'DateExtractedCST':[timestamp()],'ErrorMessage':[error_message]}
-            add_results(results_dict)
+            results_list=[upc,item_desc,'','','',item_number,'',imap_price,'',promo1price,promo1start,promo1end,'NO','','',timestamp(),error_message]
+            add_results([results_list])
             print(results_df)
     
                     
     
     #if search shows a list of result, a check for relevant ones is performed and if so, necessary data are got directly in this page.    
     elif len(driver.find_elements(By.XPATH,'//li[@class="product-item"]'))!=0:
+        
         exact_product_xpath='//li[@class="product-item"][.//span[@class="vendor-number"]//strong[text()="{}"]][1]'.format(item_number)
         relevant_results=driver.find_elements(By.XPATH,exact_product_xpath)
         
@@ -151,49 +151,50 @@ def extract_data(input_row):
             for result in relevant_results:
                 
                 product_title=result.find_element(By.XPATH,'.//a[@class="name"]').text.strip()
-                print(product_title)
                 
                 if "https://www.internationaltool.com" in result.find_element(By.XPATH,'.//a[@class="name"]').get_attribute('href'):
                     product_url=result.find_element(By.XPATH,'.//a[@class="name"]').get_attribute('href')    
+                
                 else:
                     product_url="https://www.internationaltool.com"+result.find_element(By.XPATH,'.//a[@class="name"]').get_attribute('href')
-                print(product_url)
+                
                 
                 retailer_price=result.find_element(By.XPATH,'.//span[@class="list-item-price"]').text.strip().replace("$","").replace("EACH","").replace(",","")
-                violation=violation_check(int(retailer_price),int(imap_price),int(promo1price),promo1start,promo1end)
+                violation=violation_check(retailer_price,imap_price,promo1price,promo1start,promo1end)
+                print(violation)
                 seller_name='International Tool'
                 
+
                 if len(result.find_elements(By.XPATH,'.//button[contains(.,"Add to Cart")]'))!=0:
                     stock='In Stock'
                 else:
                     stock=''
                 
-                if result.find_element(By.XPATH,'.//span[@class="vendor-number"]//strong').text.strip().lower()==input_row[1].strip().lower():
+                if result.find_element(By.XPATH,'.//span[@class="vendor-number"]//strong').text.strip().lower()==item_number.strip().lower():
                     item_number_website=result.find_element(By.XPATH,'.//span[@class="vendor-number"]//strong').text.strip()
-                    results_dict={'UPC':[upc],'ItemDesc':[item_desc],'SellerName':[seller_name],'ProductTitle':[product_title],'ProductURL':[product_url],'ItemNumber':[item_number],'ItemNumber-Website':[item_number_website],'IMAPPrice':[imap_price],'RetailPrice':[retailer_price],'Promo1Price':[promo1price],'Promo1Start':[promo1start],'Promo1End':[promo1end],'Violation':[violation],'In-OutofStock':[stock],'GeoLocation':[''],'DateExtractedCST':[timestamp()],'ErrorMessage':['']}            
-                    add_results(results_dict)            
-                    print(results_df)
-                    
+                    results_list=[upc,item_desc,seller_name,product_title,product_url,item_number,item_number_website,imap_price,retailer_price,promo1price,promo1start,promo1end,violation,stock,'',timestamp(),'']            
+                    add_results([results_list])           
+                    print(results_df)        
+                
                 else:
                     retailer_price=''
                     error_message='The "ItemNumber" input does not match the one in the pdp.'
-                    results_dict={'UPC':[upc],'ItemDesc':[item_desc],'SellerName':[seller_name],'ProductTitle':[product_title],'ProductURL':[product_url],'ItemNumber':[item_number],'ItemNumber-Website':[item_number_website],'IMAPPrice':[imap_price],'RetailPrice':[retailer_price],'Promo1Price':[promo1price],'Promo1Start':[promo1start],'Promo1End':[promo1end],'Violation':['NO'],'In-OutofStock':[stock],'GeoLocation':[''],'DateExtractedCST':[timestamp()],'ErrorMessage':[error_message]}        
-                    add_results(results_dict)
+                    results_list=[upc,item_desc,seller_name,product_title,product_url,item_number,item_number_website,imap_price,retailer_price,promo1price,promo1start,promo1end,'NO',stock,'',timestamp(),error_message]        
+                    add_results([results_list])
                     print(results_df)
-                    
+
         #if there is no relevant result, the below error message is used to indicate that the product we searched for is not present.
         else:
             error_message='There is no relevant item in the results list.'
-            results_dict={'UPC':[upc],'ItemDesc':[item_desc],'SellerName':[''],'ProductTitle':[''],'ProductURL':[''],'ItemNumber':[item_number],'ItemNumber-Website':[''],'IMAPPrice':[imap_price],'RetailPrice':[''],'Promo1Price':[promo1price],'Promo1Start':[promo1start],'Promo1End':[promo1end],'Violation':['NO'],'In-OutofStock':[''],'GeoLocation':[''],'DateExtractedCST':[timestamp()],'ErrorMessage':[error_message]}
-            add_results(results_dict)
+            results_list=[upc,item_desc,'','','',item_number,'',imap_price,'',promo1price,promo1start,promo1end,'NO','','',timestamp(),error_message]
+            add_results([results_list])
             print(results_df)
-        
     
     #if product is not available, the error message appeared is also extracted here.
     elif len(driver.find_elements(By.CSS_SELECTOR,'p[class="non-stock-topDescription"]'))!=0:
         error_message=driver.find_element(By.CSS_SELECTOR,'p[class="non-stock-topDescription"]').text.strip()
-        results_dict={'UPC':[upc],'ItemDesc':[item_desc],'SellerName':[''],'ProductTitle':[''],'ProductURL':[''],'ItemNumber':[item_number],'ItemNumber-Website':[''],'IMAPPrice':[imap_price],'RetailPrice':[''],'Promo1Price':[promo1price],'Promo1Start':[promo1start],'Promo1End':[promo1end],'Violation':[''],'In-OutofStock':[''],'GeoLocation':[''],'DateExtractedCST':[timestamp()],'ErrorMessage':[error_message]}
-        add_results(results_dict)
+        results_list=[upc,item_desc,'','','',item_number,'',imap_price,'',promo1price,promo1start,promo1end,'NO','','',timestamp(),error_message]
+        add_results([results_list])
         print(results_df)
     
 
@@ -202,12 +203,12 @@ def extract_data(input_row):
 
 
 #This is the most interesting part, which ensures that the site is opened and harvested multiple times simultaneosly, to make the process faster.
-with ThreadPoolExecutor(max_workers=10) as executor:
+with ThreadPoolExecutor(max_workers=1) as executor:
     executor.map(extract_data,input_rows_list)
 
 
 #In the end, we create a csv results file from the final dataframe we obtained.
-results_df.to_csv(results_file,index=False)
-
+results_df.to_csv(csv_file,index=False)
+ 
 
 
